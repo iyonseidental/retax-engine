@@ -292,8 +292,9 @@ RETAX.UI = (function () {
       ${propsHtml}
       <div class="toolbar">
         <button class="btn" id="btn-add-prop">+ 주택 추가</button>
+        <button class="btn" id="btn-sample2">2주택 예시 불러오기</button>
         <button class="btn primary" id="btn-apply">적용 및 전체 재계산</button>
-        <button class="btn danger" id="btn-reset">기본 테스트 케이스로 초기화</button>
+        <button class="btn danger" id="btn-reset">전체 초기화</button>
       </div>`;
   }
 
@@ -673,13 +674,16 @@ RETAX.UI = (function () {
     const addProp = el("btn-add-prop");
     if (addProp) addProp.onclick = () => {
       readPropertyInputs();
-      const n = APP.pf.properties.length + 1;
-      APP.pf.properties.push(Object.assign(RETAX.State.defaultPortfolio().properties[0], {
-        id: "prop" + Date.now(), name: "주택 " + n, district: "기타 서울",
-        publicPriceByYear: {}, assumptions: ["신규 입력 필요"]
-      }));
-      APP.pf.properties[APP.pf.properties.length - 1].publicPriceByYear[APP.pf.assumptions.startYear] = 10e8;
+      const p = RETAX.State.blankProperty(APP.pf.properties.length + 1);
+      p.owners = [{ taxpayerId: APP.pf.household.taxpayers[0].id, share: 1.0 }];
+      APP.pf.properties.push(p);
       fullRefresh(); APP.tab = "props"; renderTab();
+    };
+    const sample2 = el("btn-sample2");
+    if (sample2) sample2.onclick = () => {
+      if (confirm("현재 입력을 가상의 2주택 예시 데이터로 바꿉니다. 계속할까요?")) {
+        APP.pf = RETAX.State.sampleTwoHomePortfolio(); fullRefresh(); APP.tab = "props"; renderTab();
+      }
     };
     const addTp = el("btn-add-tp");
     if (addTp) addTp.onclick = () => {
@@ -691,7 +695,7 @@ RETAX.UI = (function () {
     if (apply) apply.onclick = () => { readPropertyInputs(); fullRefresh(); };
     const reset = el("btn-reset");
     if (reset) reset.onclick = () => {
-      if (confirm("모든 입력을 기본 테스트 케이스로 되돌립니다. 계속할까요?")) {
+      if (confirm("모든 입력을 지우고 예시 1주택 상태로 되돌립니다. 계속할까요?")) {
         APP.pf = RETAX.State.reset(); fullRefresh();
       }
     };

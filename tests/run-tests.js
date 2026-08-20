@@ -34,6 +34,34 @@ function ok(name, cond) {
   if (cond) { pass++; } else { fail++; failures.push(name); }
 }
 
+/** 회귀 테스트 전용 2주택 fixture (앱 기본값 아님 — 앱 기본값은 범용 예시) */
+function makeRegressionPortfolio() {
+  const mk = (id, name, district, pub, mv, acqDate, acqPrice, exp, reside, resideYears) => ({
+    id, name, district, address: "", exclusiveArea: null,
+    owners: [{ taxpayerId: "tp1", share: 1.0 }],
+    publicPriceByYear: { 2026: pub }, publicPriceGrade: {},
+    marketValue: mv, marketValueYear: 2026,
+    acquisitionDate: acqDate, acquisitionPrice: acqPrice, necessaryExpenses: exp,
+    residence: { isCurrentResidence: reside, residenceYears: resideYears },
+    loan: { balance: 0, rate: 0.04 }, rental: { type: reside ? "실거주" : "전세", netAnnualIncome: 0 },
+    maintenanceAnnual: 0, sellingCostRate: 0.007, assumptions: []
+  });
+  return {
+    version: 2,
+    household: { taxpayers: [{ id: "tp1", name: "본인", age: 55 }] },
+    properties: [
+      mk("heukseok", "흑석한강푸르지오", "동작구", 1797800000, 2600000000, "2013-05-01", 900000000, 40000000, true, 10),
+      mk("gaepo", "개포경남아파트", "강남구", 2809000000, 4000000000, "2016-05-01", 1400000000, 60000000, false, 0)
+    ],
+    assumptions: {
+      startYear: 2026, endYear: 2035, lawMode: "CURRENT", scenarioKey: "BASE",
+      cashReturn: 0.03, discountRate: 0.03, liquidateAtEnd: true,
+      customScenario: { marketGrowth: 0.03, publicGrowth: 0.025 }
+    },
+    screenshotReference: { year: 2026, totalHoldingTax: 42990000, jongbuse: 30170000 }
+  };
+}
+
 /* =========================================================
  * 1. 누진세 계산기
  * ========================================================= */
@@ -248,7 +276,7 @@ function ok(name, cond) {
  * 8. Holding 오케스트레이터 + 실제 포트폴리오 회귀 (PART 11, 82~84)
  * ========================================================= */
 {
-  const pf = R.State.defaultPortfolio();
+  const pf = makeRegressionPortfolio();
   const held = pf.properties.map(p => ({ property: p, publicPrice: p.publicPriceByYear[2026] }));
   const res = R.Holding.computeYear({
     year: 2026, lawMode: "CURRENT", household: pf.household, held, prevState: null
@@ -273,7 +301,7 @@ function ok(name, cond) {
  * 9. 전략 시뮬레이션 (PART 28~34, 45, 54)
  * ========================================================= */
 {
-  const pf = R.State.defaultPortfolio();
+  const pf = makeRegressionPortfolio();
   const A = { startYear: 2026, endYear: 2032, lawMode: "CURRENT", scenarioKey: "BASE",
               cashReturn: 0.03, discountRate: 0.03, liquidateAtEnd: true };
 
@@ -341,6 +369,25 @@ function ok(name, cond) {
   const s2 = M.projectSeries(1e9, 2026, 2030, { 2027: 0.07, 2028: 0.05, 2029: 0.03, 2030: -0.02 });
   near("연도별 성장률", s2[2030], Math.round(1e9 * 1.07 * 1.05 * 1.03 * 0.98), 5);
   eq("성장률 폴백(마지막 값 유지)", M.growthFor({ 2027: 0.07 }, 2030), 0.07);
+}
+
+/* =========================================================
+ * 10-b. 앱 기본값 범용성 — 특정인 데이터가 없어야 함
+ * ========================================================= */
+{
+  const d = JSON.stringify(R.State.defaultPortfolio());
+  const s = JSON.stringify(R.State.sampleTwoHomePortfolio());
+  ok("기본값에 특정 아파트명 없음", !d.includes("흑석") && !d.includes("개포"));
+  ok("2주택 예시에도 특정 아파트명 없음", !s.includes("흑석") && !s.includes("개포"));
+  eq("기본값은 1주택 예시", R.State.defaultPortfolio().properties.length, 1);
+  eq("2주택 예시는 2주택", R.State.sampleTwoHomePortfolio().properties.length, 2);
+  // 기본 예시로도 엔진이 정상 동작
+  const sim = R.Strategy.simulate(R.State.defaultPortfolio(), { name: "hold", sales: [] },
+    { startYear: 2026, endYear: 2030, lawMode: "CURRENT", scenarioKey: "BASE" });
+  ok("기본 예시 시뮬레이션 정상", Number.isFinite(sim.terminalWealth) && sim.years.length === 5);
+  const sim2 = R.Strategy.simulate(R.State.sampleTwoHomePortfolio(), { name: "hold", sales: [] },
+    { startYear: 2026, endYear: 2030, lawMode: "CURRENT", scenarioKey: "BASE" });
+  ok("2주택 예시 시뮬레이션 정상", Number.isFinite(sim2.terminalWealth));
 }
 
 /* =========================================================
