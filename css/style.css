@@ -1,0 +1,142 @@
+/* Korea Real Estate Tax & Exit Strategy Engine */
+* { box-sizing: border-box; }
+:root {
+  --bg: #f4f2ed; --panel: #fffdf8; --ink: #2a2722; --muted: #7a7468;
+  --line: #e2ddd2; --accent: #4a7dbd; --accent2: #c9704a; --good: #5a9e6f; --bad: #b8556f;
+}
+body { margin: 0; font-family: "Pretendard", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  background: var(--bg); color: var(--ink); font-size: 15px; line-height: 1.55; }
+header { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end;
+  padding: 18px 22px 10px; background: var(--panel); border-bottom: 2px solid var(--line); }
+h1 { margin: 0; font-size: 21px; }
+.sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-left: auto; }
+.controls label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 2px; }
+.controls input, .controls select { width: 130px; }
+input, select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: #fff; font-size: 14px; font-family: inherit; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 10px 22px 0; background: var(--panel);
+  border-bottom: 2px solid var(--line); position: sticky; top: 0; z-index: 20; }
+.tab { border: 1px solid var(--line); border-bottom: none; background: #efece4;
+  padding: 8px 16px; border-radius: 8px 8px 0 0; cursor: pointer; font-size: 14px; font-family: inherit; }
+.tab.active { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+main { padding: 20px 22px 40px; max-width: 1160px; margin: 0 auto; }
+h3 { margin: 26px 0 10px; font-size: 17px; border-left: 4px solid var(--accent); padding-left: 10px; }
+h4 { margin: 4px 0 10px; }
+.hint { color: var(--muted); font-size: 12px; font-weight: 400; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.card-t { font-size: 12px; color: var(--muted); }
+.card-v { font-size: 20px; font-weight: 700; margin: 4px 0; }
+
+.badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+.badge-current { background: #dcebdc; color: #2d6a3f; }
+.badge-proposed { background: #f6e3cf; color: #9a5b1f; }
+.badge-custom { background: #e3ddf4; color: #5b4a9a; }
+.badge-exact { background: #dcebdc; color: #2d6a3f; }
+.badge-est { background: #e8e4da; color: #6a6252; }
+.badge-scn { background: #dde7f4; color: #2f5a8f; }
+.badge-asm { background: #f4dddd; color: #8f2f3f; }
+
+.warn-box { background: #fbeee0; border: 1px solid #e8c9a5; border-radius: 8px; padding: 10px 14px; margin: 12px 0; }
+.ver { font-size: 12px; font-weight: 600; color: #fff; background: var(--accent);
+  border-radius: 10px; padding: 2px 9px; vertical-align: middle; margin-left: 6px; }
+#law-banner:empty { display: none; }
+#law-banner .law-update { background: #f6e3cf; border-bottom: 2px solid #e0b88a;
+  padding: 10px 22px; font-size: 13.5px; }
+#law-banner .law-update b { color: #9a5b1f; }
+.note { background: #eef2f7; border: 1px solid #cfdcec; border-radius: 8px; padding: 10px 14px; margin: 12px 0; font-size: 13.5px; }
+.asm-box { background: #faf0f0; border: 1px dashed #dcb8b8; border-radius: 8px; padding: 8px 12px;
+  margin: 10px 0; font-size: 12.5px; color: #7a4a4a; }
+.signal { background: #fbe6e0; border: 1px solid #e2b1a3; border-radius: 8px; padding: 10px 14px; margin: 14px 0; font-weight: 600; }
+.signal.ok { background: #e5f0e5; border-color: #b6d4b6; font-weight: 400; }
+.analysis { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px 18px; }
+.analysis .conf { color: var(--muted); font-size: 13px; }
+.qa { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 14px 14px 36px; }
+.qa li { margin: 10px 0; }
+
+.tbl-wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin: 10px 0; }
+table.data { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+table.data th { background: #ece8de; text-align: left; padding: 8px 10px; white-space: nowrap; }
+table.data td { border-top: 1px solid var(--line); padding: 7px 10px; }
+table.data .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.data tr.hl { background: #f3ecdc; font-weight: 600; }
+table.data.small { font-size: 12px; }
+td.small { font-size: 11.5px; color: var(--muted); max-width: 340px; }
+.up { color: var(--bad); } .down { color: var(--good); }
+
+details.audit { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  margin: 8px 0; padding: 8px 14px; }
+details.audit summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+table.steps { border-collapse: collapse; width: 100%; max-width: 620px; margin: 8px 0; font-size: 13px; }
+table.steps td { border-top: 1px dashed var(--line); padding: 5px 8px; }
+table.steps td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.chart { width: 100%; max-width: 860px; height: auto; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 10px; margin: 8px 0; display: block; }
+.chart .grid { stroke: #eae6db; stroke-width: 1; }
+.chart .ylab, .chart .xlab { font-size: 11.5px; fill: var(--muted); }
+.chart .vlab { font-size: 10.5px; fill: var(--ink); }
+.chart .leg { font-size: 12px; fill: var(--ink); }
+.chart .cell { font-size: 10px; fill: #222; }
+.chart .marker { font-size: 11px; fill: #c94a4a; font-weight: 700; }
+
+.prop-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.prop-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+.prop-card.wide { grid-column: 1 / -1; margin: 10px 0; }
+.prop-card label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 3px; margin: 4px 0; }
+.grid3 { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px 14px; }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.btn { display: inline-block; padding: 8px 14px; border: 1px solid var(--line); border-radius: 8px;
+  background: #fff; cursor: pointer; font-size: 13.5px; text-decoration: none; color: var(--ink); font-family: inherit; }
+.btn:hover { background: #f0ede5; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.btn.primary:hover { background: #3a6aa8; }
+.btn.danger { color: #a33; border-color: #d8b4b4; }
+
+footer { padding: 18px 22px 30px; border-top: 2px solid var(--line); background: var(--panel); }
+
+/* ---------- 반응형 (태블릿/모바일) ---------- */
+@media (max-width: 900px) {
+  header { padding: 14px 14px 8px; gap: 10px; }
+  .controls { margin-left: 0; width: 100%; }
+  .controls label { flex: 1 1 44%; min-width: 130px; }
+  .controls input, .controls select { width: 100%; }
+  .controls .btn { flex: 1 1 100%; }
+  main { padding: 14px 12px 36px; }
+}
+@media (max-width: 680px) {
+  body { font-size: 14px; }
+  h1 { font-size: 17px; }
+  .sub { font-size: 11.5px; }
+  .tabs { flex-wrap: nowrap; overflow-x: auto; padding: 8px 10px 0; -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin; }
+  .tab { white-space: nowrap; padding: 9px 12px; font-size: 13px; flex: 0 0 auto; }
+  h3 { font-size: 15.5px; margin: 20px 0 8px; }
+  .cards { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .card { padding: 10px 11px; }
+  .card-v { font-size: 16px; }
+  table.data { font-size: 12px; }
+  table.data th, table.data td { padding: 6px 7px; }
+  .qa { padding: 12px 10px 12px 28px; }
+  .analysis { padding: 4px 12px; }
+  .grid3 { grid-template-columns: 1fr 1fr; }
+  .prop-card label { font-size: 11.5px; }
+  input, select { font-size: 16px; /* iOS 확대 방지 */ padding: 8px; }
+  .btn { padding: 10px 14px; }
+  .toolbar .btn { flex: 1 1 auto; text-align: center; }
+  .chart { border-radius: 8px; }
+  footer { padding: 14px 12px 24px; }
+}
+@media (max-width: 430px) {
+  .grid3 { grid-template-columns: 1fr; }
+  .cards { grid-template-columns: 1fr 1fr; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .tab, .btn { transition: background .15s ease; }
+}
+.disclaimer { font-size: 12.5px; color: var(--muted); max-width: 900px; }
+.meta { margin-top: 8px; font-size: 11.5px; color: var(--muted); }
+code { background: #efece4; padding: 1px 5px; border-radius: 4px; font-size: 12px; }

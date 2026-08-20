@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>부동산 보유·매도 전략 엔진 — Korea Real Estate Tax &amp; Exit Strategy</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1>🏠 부동산 보유·매도 전략 엔진 <span class="ver">Ver. 1.0</span></h1>
+    <p class="sub">제작자 <b>Dr. Min &amp; Dr. Lee</b> · 보유세 · 양도세 · HOLD/SELL DECISION — deterministic tax engine</p>
+    <p class="sub" id="law-status">법령 DB 확인 중…</p>
+  </div>
+  <div id="controls" class="controls"></div>
+</header>
+
+<div id="law-banner"></div>
+<nav id="tabs" class="tabs"></nav>
+
+<main id="content">로딩 중…</main>
+
+<footer>
+  <div class="disclaimer">
+    본 프로그램은 부동산 보유 및 매도 의사결정을 위한 <b>세금 시뮬레이션 도구</b>입니다.
+    실제 신고세액은 개별 사실관계, 세법 개정, 과세관청의 판단 등에 따라 달라질 수 있습니다.
+    중요한 매매 또는 세금 신고 전에는 <b>세무전문가 확인</b>이 필요합니다.
+    미래 가격 관련 수치는 예측이 아니라 <b>가정에 따른 시나리오</b>입니다.
+  </div>
+  <div id="footer-meta" class="meta"></div>
+</footer>
+
+<script src="js/core/util.js"></script>
+<script src="js/rules/registry.js"></script>
+<script src="js/engine/propertyTax.js"></script>
+<script src="js/engine/jongbuse.js"></script>
+<script src="js/engine/cgt.js"></script>
+<script src="js/engine/holding.js"></script>
+<script src="js/engine/market.js"></script>
+<script src="js/engine/strategy.js"></script>
+<script src="js/app/state.js"></script>
+<script src="js/app/lawmonitor.js"></script>
+<script src="js/app/charts.js"></script>
+<script src="js/app/ui.js"></script>
+<script>RETAX.UI.init();</script>
+</body>
+</html>

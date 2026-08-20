@@ -1,0 +1,799 @@
+/* =========================================================
+ * UI LAYER — 렌더링 전용.
+ * 모든 숫자는 deterministic engine이 계산하고, 이 파일은 표시/설명만 한다. (PART 78~79)
+ * ========================================================= */
+"use strict";
+globalThis.RETAX = globalThis.RETAX || {};
+
+RETAX.UI = (function () {
+  const U = RETAX.Util;
+  const C = RETAX.Charts;
+  const S = RETAX.Strategy;
+  const Reg = RETAX.Registry;
+
+  const APP = { pf: null, results: null, tab: "dashboard" };
+
+  function esc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;"); }
+  function el(id) { return document.getElementById(id); }
+
+  const MODE_BADGE = {
+    CURRENT: '<span class="badge badge-current">CURRENT LAW</span>',
+    PROPOSED: '<span class="badge badge-proposed">2026 세제개편안 (미확정)</span>',
+    CUSTOM: '<span class="badge badge-custom">CUSTOM</span>'
+  };
+  const GRADE_BADGE = {
+    EXACT: '<span class="badge badge-exact">EXACT</span>',
+    ESTIMATED: '<span class="badge badge-est">ESTIMATED</span>',
+    SCENARIO: '<span class="badge badge-scn">SCENARIO</span>',
+    PROPOSED_LAW: '<span class="badge badge-proposed">PROPOSED LAW</span>',
+    ASSUMPTION: '<span class="badge badge-asm">ASSUMPTION</span>',
+    USER_INPUT: '<span class="badge badge-asm">사용자 입력값</span>'
+  };
+
+  /* =========================================================
+   * 전체 재계산
+   * ========================================================= */
+  function assumptionsOf(pf, lawModeOverride) {
+    const a = pf.assumptions;
+    const A = {
+      startYear: a.startYear, endYear: a.endYear,
+      lawMode: lawModeOverride || a.lawMode,
+      scenarioKey: a.scenarioKey,
+      cashReturn: a.cashReturn, discountRate: a.discountRate,
+      liquidateAtEnd: a.liquidateAtEnd !== false
+    };
+    if (a.scenarioKey === "CUSTOM") {
+      A.scenario = { key: "CUSTOM", label: "사용자", marketGrowth: a.customScenario.marketGrowth, publicGrowth: a.customScenario.publicGrowth };
+      A.lawMode = A.lawMode === "CUSTOM" ? "CURRENT" : A.lawMode;
+    }
+    if (A.lawMode === "CUSTOM") A.lawMode = "CURRENT"; // CUSTOM 법모드는 시나리오 파라미터로만 반영(v1)
+    return A;
+  }
+
+  function recompute() {
+    const pf = APP.pf;
+    const A = assumptionsOf(pf);
+    const otherMode = A.lawMode === "PROPOSED" ? "CURRENT" : "PROPOSED";
+    const AOther = assumptionsOf(pf, otherMode);
+
+    const holdPlan = { name: "모두 계속 보유", sales: [] };
+    const t0 = Date.now();
+    const holdSim = S.simulate(pf, holdPlan, A);
+    const holdSimOther = S.simulate(pf, holdPlan, AOther);
+    const evalAll = S.evaluateAll(pf, A);
+    const evalAllOther = S.evaluateAll(pf, AOther);
+
+    const exitCurves = {}, sensitivity = {}, reversalVsHold = {};
+    for (const p of pf.properties) {
+      exitCurves[p.id] = S.exitYearCurve(pf, p.id, A);
+      sensitivity[p.id] = S.sensitivityMatrix(pf, p.id, A);
+      reversalVsHold[p.id] = S.findReversalPoint(pf, holdPlan,
+        { name: "sell", sales: [{ propertyId: p.id, date: (A.startYear + 1) + "-09-30" }] }, A);
+    }
+    let reversalAB = null;
+    if (pf.properties.length === 2) {
+      const [pa, pb] = pf.properties;
+      reversalAB = S.findReversalPoint(pf,
+        { name: "sellA", sales: [{ propertyId: pa.id, date: (A.startYear + 1) + "-09-30" }] },
+        { name: "sellB", sales: [{ propertyId: pb.id, date: (A.startYear + 1) + "-09-30" }] }, A);
+    }
+
+    // 핵심 매트릭스 (PART 30, 111)
+    const keyPlans = [{ label: "두 채 계속 보유", plan: holdPlan }];
+    for (const p of pf.properties) {
+      for (const y of [2027, 2028]) {
+        if (y >= A.startYear && y <= A.endYear)
+          keyPlans.push({ label: p.name + " " + y + " 매도", plan: { name: p.name + " " + y, sales: [{ propertyId: p.id, date: y + "-09-30" }] } });
+      }
+    }
+    const best = evalAll[0];
+    keyPlans.push({ label: "시스템 최적: " + best.strategy.name, plan: best.strategy, isBest: true });
+    const keyMatrix = keyPlans.map(k => ({ label: k.label, isBest: k.isBest, sim: S.simulate(pf, k.plan, A) }));
+
+    const bestSellByYear = {};
+    for (const p of pf.properties)
+      for (const c of exitCurves[p.id])
+        bestSellByYear[c.year] = Math.max(bestSellByYear[c.year] || -Infinity, c.terminalWealth);
+    const signals = S.sellReviewSignals(holdSim, bestSellByYear);
+
+    APP.results = {
+      A, AOther, holdSim, holdSimOther, evalAll, evalAllOther,
+      exitCurves, sensitivity, reversalVsHold, reversalAB,
+      keyMatrix, signals, computeMs: Date.now() - t0
+    };
+  }
+
+  /* =========================================================
+   * 공통 조각
+   * ========================================================= */
+  function stepsTable(steps) {
+    return '<table class="steps"><tbody>' + steps.map(s =>
+      `<tr><td>${esc(s.label)}</td><td class="num">${s.isRate ? U.pct(s.value) : U.fmt(s.value) + "원"}</td></tr>`
+    ).join("") + "</tbody></table>";
+  }
+  function auditDetails(title, steps, extra) {
+    return `<details class="audit"><summary>${esc(title)} <span class="hint">계산과정 펼치기</span></summary>${stepsTable(steps)}${extra || ""}</details>`;
+  }
+  function assumptionList(items) {
+    if (!items || !items.length) return "";
+    return `<div class="asm-box">${GRADE_BADGE.ASSUMPTION} ` + items.map(esc).join(" · ") + "</div>";
+  }
+
+  /* =========================================================
+   * TAB: 대시보드
+   * ========================================================= */
+  function renderDashboard() {
+    const pf = APP.pf, R = APP.results;
+    const A = R.A;
+    const y0 = A.startYear;
+    const rows = R.holdSim.years;
+    const r0 = rows[0], r1 = rows[1];
+    const cum5 = rows.filter(r => r.year < y0 + 5).reduce((s, r) => s + r.holdingTax, 0);
+    const cum10 = rows.filter(r => r.year < y0 + 10).reduce((s, r) => s + r.holdingTax, 0);
+    const totalMarket = pf.properties.reduce((s, p) => s + p.marketValue, 0);
+    const totalPublic = pf.properties.reduce((s, p) => s + (p.publicPriceByYear[y0] || 0), 0);
+    const best = R.evalAll[0];
+    const bestSaleYears = best.strategy.sales.map(s => {
+      const p = pf.properties.find(x => x.id === s.propertyId);
+      return (p ? p.name : s.propertyId) + " " + s.date;
+    }).join(", ") || "매도 없음";
+
+    const cards = [
+      ["현재 총 시장가치", U.fmtEok(totalMarket), "ASSUMPTION"],
+      ["현재 총 공시가격 (" + y0 + ")", U.fmtEok(totalPublic), "USER_INPUT"],
+      [y0 + " 예상 보유세", U.fmtEok(r0.holdingTax), "EXACT"],
+      [(y0 + 1) + " 예상 보유세", r1 ? U.fmtEok(r1.holdingTax) : "-", A.lawMode === "PROPOSED" ? "PROPOSED_LAW" : "SCENARIO"],
+      ["5년 누적 보유세", U.fmtEok(cum5), "SCENARIO"],
+      ["10년 누적 보유세", A.endYear >= y0 + 9 ? U.fmtEok(cum10) : "기간 부족", "SCENARIO"],
+      ["Break-even 상승률 (" + (y0 + 1) + ")", r1 && r1.breakEvenRate != null ? U.pct(r1.breakEvenRate, 2) : "-", "SCENARIO"],
+      ["전략 1위", best.strategy.name, "SCENARIO"],
+      ["추천 검토 매도시점", bestSaleYears, "SCENARIO"]
+    ];
+
+    // 핵심 5질문 (PART 116~117)
+    const heuk = pf.properties[0], gaepo = pf.properties[1];
+    const revA = heuk ? R.reversalVsHold[heuk.id] : null;
+    const revB = gaepo ? R.reversalVsHold[gaepo.id] : null;
+    const q5 = [];
+    if (revA != null) q5.push(`시장 연평균 상승률이 <b>${(revA * 100).toFixed(2)}%</b>를 넘으면 「계속 보유」가 「${esc(heuk.name)} 조기 매도」보다 유리해집니다(그 이하면 매도 우위).`);
+    if (revB != null) q5.push(`상승률 <b>${(revB * 100).toFixed(2)}%</b>가 「계속 보유」 vs 「${esc(gaepo.name)} 조기 매도」의 경계입니다.`);
+    if (R.reversalAB != null && gaepo) q5.push(`상승률 <b>${(R.reversalAB * 100).toFixed(2)}%</b>를 경계로 어느 집을 먼저 팔지가 뒤집힙니다.`);
+    if (!q5.length) q5.push("분석 구간(-5%~+12%) 안에서 전략 순위가 뒤집히는 상승률이 발견되지 않았습니다 — 현재 가정에서 결론이 비교적 견고합니다.");
+
+    const matrix = R.keyMatrix.map(k => `
+      <tr class="${k.isBest ? "hl" : ""}">
+        <td>${esc(k.label)}</td>
+        <td class="num">${U.fmtEok(k.sim.totalCGT)}</td>
+        <td class="num">${U.fmtEok(k.sim.totalHoldingTax)}</td>
+        <td class="num">${U.fmtEok(k.sim.totalSellingCosts)}</td>
+        <td class="num"><b>${U.fmtEok(k.sim.terminalWealth)}</b></td>
+        <td class="num">${U.fmtEok(k.sim.npv)}</td>
+      </tr>`).join("");
+
+    const sigHtml = R.signals.length
+      ? `<div class="signal">⚠ SELL REVIEW SIGNAL: ${R.signals.map(s => s.year + "년").join(", ")} — 기대수익이 보유비용을 하회하고 매도 전략의 최종자산이 더 높습니다. (자동 매도 권고가 아닌 재검토 신호입니다)`
+        + "</div>"
+      : `<div class="signal ok">현재 가정에서는 「기대수익 &lt; 보유비용 AND 매도 우위」가 동시에 성립하는 연도가 없습니다.</div>`;
+
+    // ANALYSIS (PART 105) — 엔진 숫자를 규칙 기반 템플릿으로 설명 (AI가 세금을 계산하지 않음)
+    const holdRank = R.evalAll.findIndex(r => r.strategy.key === "HOLD_ALL") + 1;
+    const analysis = `
+      <p>${esc(R.holdSim.scenario.label)}(${A.scenarioKey}) 시나리오 · ${MODE_BADGE[APP.pf.assumptions.lawMode] || ""} 기준,
+      ${A.endYear}년까지 분석(종료연도 청산 가정) 결과 <b>「${esc(best.strategy.name)}」</b> 전략의
+      세후 최종자산이 <b>${U.fmtEok(best.terminalWealth)}</b>으로 가장 높습니다.
+      「모두 계속 보유」는 ${holdRank}위(${U.fmtEok(R.holdSim.terminalWealth)})입니다.</p>
+      <p>주요 요인: ① 보유세 차이 — 계속 보유 시 누적 ${U.fmtEok(R.holdSim.totalHoldingTax)} vs 1위 전략 ${U.fmtEok(best.sim.totalHoldingTax)},
+      ② 양도세 차이 — ${U.fmtEok(R.holdSim.totalCGT)} vs ${U.fmtEok(best.sim.totalCGT)}
+      (매도시점의 중과세율·주택수에 따라 달라짐), ③ 매도대금 재투자수익(연 ${U.pct(A.cashReturn)}) 대 주택가격 상승률의 경쟁입니다.</p>
+      <p class="conf">신뢰도: 세금 산식 = <b>HIGH</b>(법령 기반, 단 가정 입력값 검증 필요) / 미래 가격 = <b>LOW</b>(시나리오 가정).
+      아래 「무엇이 바뀌면 결론이 뒤집히는가」를 반드시 함께 보십시오.</p>`;
+
+    return `
+      <div class="cards">${cards.map(c => `
+        <div class="card"><div class="card-t">${esc(c[0])}</div><div class="card-v">${c[1]}</div>${GRADE_BADGE[c[2]] || ""}</div>`).join("")}
+      </div>
+      ${APP.pf.assumptions.lawMode === "PROPOSED" ? '<div class="warn-box">정부 세제개편안 기준 시뮬레이션 — 현재 시행법이 아니며, 국회 심의 및 법률 공포 과정에서 변경될 수 있습니다.</div>' : ""}
+      <h3>핵심 질문에 대한 답</h3>
+      <ol class="qa">
+        <li><b>지금 두 채를 계속 보유하면 매년 보유세가 얼마인가?</b><br>
+          ${rows.slice(0, 5).map(r => r.year + "년 " + U.fmtEok(r.holdingTax)).join(" → ")} …</li>
+        <li><b>${A.endYear}년까지 누적 보유세는?</b><br> ${U.fmtEok(R.holdSim.totalHoldingTax)}
+          (개편안 시행 가정 시 ${U.fmtEok(R.holdSimOther.totalHoldingTax)})</li>
+        <li><b>어느 집을 먼저 매도하는 것이 세후 자산 기준으로 유리한가?</b><br> ${renderWhichHouseShort()}</li>
+        <li><b>몇 년에 매도해야 세후 최종자산이 가장 높은가?</b><br>
+          ${pf.properties.map(p => {
+            const c = R.exitCurves[p.id]; if (!c.length) return "";
+            const b = c.reduce((m, x) => x.terminalWealth > m.terminalWealth ? x : m, c[0]);
+            return esc(p.name) + ": <b>" + b.year + "년</b> (TW " + U.fmtEok(b.terminalWealth) + ")";
+          }).join(" / ")}</li>
+        <li><b>어떤 가정이 바뀌면 결론이 뒤집히는가?</b><br> ${q5.join("<br>")}</li>
+      </ol>
+      ${sigHtml}
+      <h3>핵심 비교 매트릭스 ${MODE_BADGE[APP.pf.assumptions.lawMode]}</h3>
+      <div class="tbl-wrap"><table class="data">
+        <thead><tr><th>전략</th><th>양도세(지방세 포함)</th><th>누적 보유세</th><th>매도비용</th><th>세후 최종자산</th><th>NPV</th></tr></thead>
+        <tbody>${matrix}</tbody></table></div>
+      <h3>ANALYSIS <span class="hint">deterministic engine 결과의 규칙 기반 설명</span></h3>
+      <div class="analysis">${analysis}</div>`;
+  }
+
+  function renderWhichHouseShort() {
+    const pf = APP.pf, R = APP.results;
+    if (pf.properties.length < 2) return "주택이 2채 이상일 때 비교합니다.";
+    const [a, b] = pf.properties;
+    const bestA = R.exitCurves[a.id].reduce((m, x) => x.terminalWealth > m.terminalWealth ? x : m);
+    const bestB = R.exitCurves[b.id].reduce((m, x) => x.terminalWealth > m.terminalWealth ? x : m);
+    const winner = bestA.terminalWealth >= bestB.terminalWealth ? a : b;
+    const wBest = winner === a ? bestA : bestB;
+    return `단일 매도 기준 <b>${esc(winner.name)}</b>을(를) 먼저 매도(${wBest.year}년)하는 쪽이 우위입니다
+      (${esc(a.name)} 최적 ${U.fmtEok(bestA.terminalWealth)} vs ${esc(b.name)} 최적 ${U.fmtEok(bestB.terminalWealth)}).
+      단, 이는 세금 절감이 아니라 <b>세후 최종자산 최대화</b> 기준입니다.`;
+  }
+
+  /* =========================================================
+   * TAB: 보유주택 입력
+   * ========================================================= */
+  function renderProperties() {
+    const pf = APP.pf;
+    const tps = pf.household.taxpayers;
+    const tpHtml = `
+      <h3>세대 구성 (Household / Taxpayer 구분 — PART 9)</h3>
+      <div class="prop-grid">${tps.map((t, i) => `
+        <div class="prop-card">
+          <label>납세의무자 ${i + 1} 이름 <input data-tp="${i}" data-k="name" value="${esc(t.name)}"></label>
+          <label>연령 (종부세 고령자공제 판정) <input type="number" data-tp="${i}" data-k="age" value="${t.age || ""}"></label>
+        </div>`).join("")}
+        <button class="btn" id="btn-add-tp">+ 납세의무자 추가 (배우자 등)</button>
+      </div>`;
+
+    const propsHtml = pf.properties.map((p, pi) => {
+      const ownerRows = pf.household.taxpayers.map(t => {
+        const o = (p.owners || []).find(x => x.taxpayerId === t.id);
+        return `<label>${esc(t.name)} 지분(%) <input type="number" data-p="${pi}" data-owner="${t.id}" value="${o ? Math.round(o.share * 100) : 0}" min="0" max="100"></label>`;
+      }).join("");
+      return `
+      <div class="prop-card wide">
+        <h4>${esc(p.name)} <span class="hint">${esc(p.address || "")}</span></h4>
+        <div class="grid3">
+          <label>주택명 <input data-p="${pi}" data-k="name" value="${esc(p.name)}"></label>
+          <label>자치구 (조정대상지역 판정)
+            <select data-p="${pi}" data-k="district">
+              ${["강남구", "서초구", "송파구", "용산구", "동작구", "기타 서울", "비규제지역"].map(d =>
+                `<option ${p.district === d ? "selected" : ""}>${d}</option>`).join("")}
+            </select></label>
+          <label>주소 (수동입력 — 도로명주소 API는 서버 프록시 필요) <input data-p="${pi}" data-k="address" value="${esc(p.address || "")}"></label>
+          <label>${pf.assumptions.startYear} 공시가격(원) <input type="number" data-p="${pi}" data-k="publicPrice0" value="${p.publicPriceByYear[pf.assumptions.startYear] || ""}"></label>
+          <label>현재 시장가치(원) ${GRADE_BADGE.ASSUMPTION} <input type="number" data-p="${pi}" data-k="marketValue" value="${p.marketValue}"></label>
+          <label>취득일 <input type="date" data-p="${pi}" data-k="acquisitionDate" value="${esc(p.acquisitionDate)}"></label>
+          <label>실제 취득가격(원) <input type="number" data-p="${pi}" data-k="acquisitionPrice" value="${p.acquisitionPrice}"></label>
+          <label>필요경비(취득세·중개·자본적지출, 원) <input type="number" data-p="${pi}" data-k="necessaryExpenses" value="${p.necessaryExpenses || 0}"></label>
+          <label>현재 실거주 여부 <select data-p="${pi}" data-k="isCurrentResidence"><option value="true" ${p.residence.isCurrentResidence ? "selected" : ""}>실거주</option><option value="false" ${!p.residence.isCurrentResidence ? "selected" : ""}>비거주</option></select></label>
+          <label>누적 실거주 연수 <input type="number" data-p="${pi}" data-k="residenceYears" value="${p.residence.residenceYears || 0}"></label>
+          <label>대출잔액(원) <input type="number" data-p="${pi}" data-k="loanBalance" value="${p.loan ? p.loan.balance : 0}"></label>
+          <label>대출금리(%) <input type="number" step="0.1" data-p="${pi}" data-k="loanRate" value="${p.loan ? (p.loan.rate * 100).toFixed(1) : 4}"></label>
+          <label>연간 순임대수익(세후, 원) <input type="number" data-p="${pi}" data-k="netRental" value="${p.rental ? p.rental.netAnnualIncome : 0}"></label>
+          <label>연간 유지비(원) <input type="number" data-p="${pi}" data-k="maintenance" value="${p.maintenanceAnnual || 0}"></label>
+          <label>매도비용률(%) <input type="number" step="0.1" data-p="${pi}" data-k="sellingCostRate" value="${((p.sellingCostRate || 0.007) * 100).toFixed(1)}"></label>
+          <label>재건축 분담금(원, 없으면 0) <input type="number" data-p="${pi}" data-k="reconCharge" value="${p.reconstruction ? p.reconstruction.charge || 0 : 0}"></label>
+          <label>분담금 납부연도 <input type="number" data-p="${pi}" data-k="reconYear" value="${p.reconstruction && p.reconstruction.chargeYear || ""}"></label>
+        </div>
+        <div class="grid3">${ownerRows}</div>
+        ${assumptionList(p.assumptions)}
+        <button class="btn danger" data-del-prop="${pi}">이 주택 삭제</button>
+      </div>`;
+    }).join("");
+
+    return `
+      <div class="note">공시가격 자동조회(부동산공시가격알리미 API)·도로명주소 검색은 API 키/서버 프록시가 필요하여
+      v1은 <b>수동입력 + 캐시</b> 모드로 동작합니다 (API→CACHE→MANUAL fallback 설계, PART 63~64).
+      개인정보는 이 브라우저(localStorage) 밖으로 전송되지 않습니다 (local-first, PART 66).</div>
+      ${tpHtml}
+      <h3>보유 주택 (${pf.properties.length}채)</h3>
+      ${propsHtml}
+      <div class="toolbar">
+        <button class="btn" id="btn-add-prop">+ 주택 추가</button>
+        <button class="btn primary" id="btn-apply">적용 및 전체 재계산</button>
+        <button class="btn danger" id="btn-reset">기본 테스트 케이스로 초기화</button>
+      </div>`;
+  }
+
+  function readPropertyInputs() {
+    const pf = APP.pf;
+    document.querySelectorAll("[data-tp]").forEach(inp => {
+      const t = pf.household.taxpayers[+inp.dataset.tp];
+      if (!t) return;
+      if (inp.dataset.k === "age") t.age = +inp.value || null; else t[inp.dataset.k] = inp.value;
+    });
+    document.querySelectorAll("[data-p][data-k]").forEach(inp => {
+      const p = pf.properties[+inp.dataset.p];
+      if (!p) return;
+      const k = inp.dataset.k, v = inp.value;
+      switch (k) {
+        case "name": p.name = v; break;
+        case "district": p.district = v; break;
+        case "address": p.address = v; break;
+        case "publicPrice0": p.publicPriceByYear[pf.assumptions.startYear] = +v || 0; break;
+        case "marketValue": p.marketValue = +v || 0; p.marketValueYear = pf.assumptions.startYear; break;
+        case "acquisitionDate": p.acquisitionDate = v; break;
+        case "acquisitionPrice": p.acquisitionPrice = +v || 0; break;
+        case "necessaryExpenses": p.necessaryExpenses = +v || 0; break;
+        case "isCurrentResidence": p.residence.isCurrentResidence = v === "true"; break;
+        case "residenceYears": p.residence.residenceYears = +v || 0; break;
+        case "loanBalance": p.loan = p.loan || {}; p.loan.balance = +v || 0; break;
+        case "loanRate": p.loan = p.loan || {}; p.loan.rate = (+v || 0) / 100; break;
+        case "netRental": p.rental = p.rental || {}; p.rental.netAnnualIncome = +v || 0; break;
+        case "maintenance": p.maintenanceAnnual = +v || 0; break;
+        case "sellingCostRate": p.sellingCostRate = (+v || 0) / 100; break;
+        case "reconCharge": p.reconstruction = p.reconstruction || {}; p.reconstruction.charge = +v || 0; break;
+        case "reconYear": p.reconstruction = p.reconstruction || {}; p.reconstruction.chargeYear = +v || null; break;
+      }
+    });
+    document.querySelectorAll("[data-owner]").forEach(inp => {
+      const p = pf.properties[+inp.dataset.p];
+      if (!p) return;
+      const share = (+inp.value || 0) / 100;
+      p.owners = p.owners.filter(o => o.taxpayerId !== inp.dataset.owner);
+      if (share > 0) p.owners.push({ taxpayerId: inp.dataset.owner, share });
+    });
+  }
+
+  /* =========================================================
+   * TAB: 보유세 상세
+   * ========================================================= */
+  function renderHolding() {
+    const R = APP.results, A = R.A;
+    const rows = R.holdSim.years;
+    const cats = rows.map(r => String(r.year));
+
+    const table = rows.map(r => `
+      <tr>
+        <td>${r.year}</td>
+        <td class="num">${U.fmtEok(r.marketValueHeld)}</td>
+        <td class="num">${U.fmtEok(r.publicPriceHeld)}</td>
+        <td class="num">${U.fmt(r.propertyTax)}</td>
+        <td class="num">${U.fmt(r.jongbuse)}</td>
+        <td class="num">${U.fmt(r.ruralTax)}</td>
+        <td class="num"><b>${U.fmt(r.holdingTax)}</b></td>
+        <td class="num">${U.fmtEok(r.cumHoldingTax)}</td>
+        <td class="num">${r.breakEvenRate != null ? U.pct(r.breakEvenRate, 2) : "-"}</td>
+      </tr>`).join("");
+
+    // 감사(audit) — 첫 3개 연도 상세
+    const audits = rows.slice(0, 3).map(r => {
+      const h = r.holding;
+      const ptx = h.perProperty.map(pp =>
+        auditDetails(`${r.year} 재산세 — ${pp.name} (공시 ${U.fmtEok(pp.publicPrice)})`, pp.ptx.steps)).join("");
+      const jbs = h.perTaxpayer.map(t =>
+        auditDetails(`${r.year} 종부세 — ${t.name} (${t.jbs.ruleId})`, t.jbs.steps,
+          t.jbs.flags.length ? `<div class="hint">flags: ${t.jbs.flags.join(", ")}</div>` : "")).join("");
+      return ptx + jbs;
+    }).join("");
+
+    const lawCompare = rows.map((r, i) => {
+      const o = R.holdSimOther.years[i];
+      return { y: r.year, cur: A.lawMode === "CURRENT" ? r.holdingTax : o.holdingTax, pro: A.lawMode === "CURRENT" ? o.holdingTax : r.holdingTax };
+    });
+    const impact5 = lawCompare.slice(0, 5).reduce((s, x) => s + (x.pro - x.cur), 0);
+
+    return `
+      <h3>연도별 보유세 ${MODE_BADGE[APP.pf.assumptions.lawMode]} <span class="hint">과세기준일 6/1, 계속 보유 기준</span></h3>
+      ${C.stackedBar(cats, [
+        { name: "재산세", values: rows.map(r => r.propertyTax) },
+        { name: "종부세", values: rows.map(r => r.jongbuse) },
+        { name: "농특세", values: rows.map(r => r.ruralTax) }
+      ], { title: "연도별 보유세" })}
+      ${C.line(cats, [
+        { name: "누적 보유세", values: rows.map(r => r.cumHoldingTax), bold: true }
+      ], { title: "누적 보유세" })}
+      <div class="tbl-wrap"><table class="data">
+        <thead><tr><th>연도</th><th>시장가치</th><th>공시가격</th><th>재산세</th><th>종부세</th><th>농특세</th><th>총보유세</th><th>누적</th><th>Break-even</th></tr></thead>
+        <tbody>${table}</tbody></table></div>
+      <h3>CALCULATION AUDIT <span class="hint">클릭하여 산출 전 과정 확인 (PART 61)</span></h3>
+      ${audits}
+      <h3>세법 시나리오 비교: CURRENT vs 2026 개편안 (PART 47, 58)</h3>
+      ${C.line(cats, [
+        { name: "CURRENT LAW", values: lawCompare.map(x => x.cur), bold: true },
+        { name: "2026 개편안(미확정)", values: lawCompare.map(x => x.pro), dashed: true }
+      ], { title: "법령 시나리오 비교" })}
+      <div class="tbl-wrap"><table class="data"><thead><tr><th>연도</th><th>현행법</th><th>개편안</th><th>영향</th></tr></thead>
+      <tbody>${lawCompare.map(x => `<tr><td>${x.y}</td><td class="num">${U.fmt(x.cur)}</td><td class="num">${U.fmt(x.pro)}</td>
+        <td class="num ${x.pro - x.cur >= 0 ? "up" : "down"}">${(x.pro - x.cur >= 0 ? "+" : "") + U.fmt(x.pro - x.cur)}</td></tr>`).join("")}
+      <tr class="hl"><td colspan="3">개편안 시행 시 5년 누적 영향</td><td class="num">${(impact5 >= 0 ? "+" : "") + U.fmt(impact5)}원</td></tr>
+      </tbody></table></div>`;
+  }
+
+  /* =========================================================
+   * TAB: 양도세
+   * ========================================================= */
+  function renderCGT() {
+    const pf = APP.pf, R = APP.results, A = R.A;
+    const out = [];
+    for (const p of pf.properties) {
+      const series = R.holdSim.series[p.id];
+      const rows = [];
+      for (let y = A.startYear; y <= A.endYear; y++) {
+        const date = y + "-09-30";
+        const mk = mode => RETAX.CGT.compute({
+          saleDate: date, salePrice: series.market[y],
+          acquisitionDate: p.acquisitionDate, acquisitionPrice: p.acquisitionPrice,
+          necessaryExpenses: p.necessaryExpenses || 0, share: 1,
+          residenceYears: (p.residence.residenceYears || 0) + (p.residence.isCurrentResidence ? y - A.startYear : 0),
+          householdCountAtSale: pf.properties.length,
+          isRegulatedAtSale: Reg.isRegulatedAt(p.district, date),
+          acquiredWhileRegulated: Reg.isRegulatedAt(p.district, p.acquisitionDate),
+          lawMode: mode
+        });
+        rows.push({ y, cur: mk("CURRENT"), pro: mk("PROPOSED"), price: series.market[y] });
+      }
+      const detail = rows[Math.min(1, rows.length - 1)];
+      out.push(`
+        <h3>${esc(p.name)} — 매도연도별 양도세 <span class="hint">단독매도(다른 주택 보유 유지, ${pf.properties.length}주택자) 가정, 9/30 양도</span></h3>
+        <div class="tbl-wrap"><table class="data">
+          <thead><tr><th>매도연도</th><th>예상 양도가액</th><th>현행: 중과</th><th>현행 총세액</th><th>개편안: 중과</th><th>개편안 총세액</th><th>차이</th></tr></thead>
+          <tbody>${rows.map(r => `
+            <tr><td>${r.y}</td><td class="num">${U.fmtEok(r.price)}</td>
+            <td>${r.cur.surcharged ? "+" + U.pct(r.cur.rateInfo.surchargeRate, 0) + "p" : (r.cur.exempt ? "비과세" : "일반")}</td>
+            <td class="num">${U.fmt(r.cur.total)}</td>
+            <td>${r.pro.surcharged ? "+" + U.pct(r.pro.rateInfo.surchargeRate, 0) + "p" : (r.pro.exempt ? "비과세" : "일반")}</td>
+            <td class="num">${U.fmt(r.pro.total)}</td>
+            <td class="num ${r.pro.total - r.cur.total >= 0 ? "up" : "down"}">${U.fmt(r.pro.total - r.cur.total)}</td></tr>`).join("")}
+          </tbody></table></div>
+        ${auditDetails(`${p.name} ${detail.y}년 매도 상세 (현행법)`, detail.cur.steps,
+          detail.cur.flags.length ? `<div class="hint">${detail.cur.flags.map(esc).join(" · ")}</div>` : "")}
+        ${auditDetails(`${p.name} ${detail.y}년 매도 상세 (2026 개편안)`, detail.pro.steps,
+          `<div class="hint">${MODE_BADGE.PROPOSED} 국회 확정 전 정부안</div>`)}`);
+    }
+    return `<div class="note">양도세는 <b>양도일 당시 유효한 법령</b>(중과 이력 포함)으로 계산합니다.
+      2026-05-10부터 조정대상지역 다주택 중과가 재개되었고(유예 종료), 개편안은 2027년(+5/+10%p)·2028년(+10/+15%p) 한시 완화 후 2029년 원상복귀입니다.</div>` + out.join("");
+  }
+
+  /* =========================================================
+   * TAB: 전략
+   * ========================================================= */
+  function renderStrategy() {
+    const pf = APP.pf, R = APP.results, A = R.A;
+    const top = R.evalAll.slice(0, 12);
+    const bars = C.hbar(top.slice(0, 8).map((r, i) => ({
+      label: (i + 1) + "위 " + r.strategy.name, value: r.terminalWealth, highlight: i === 0
+    })), { title: "전략별 세후 최종자산" });
+
+    const curves = pf.properties.map((p, i) => {
+      const c = R.exitCurves[p.id];
+      return { name: p.name + " 매도연도별 TW", values: c.map(x => x.terminalWealth), color: C.COLORS[i] };
+    });
+    const years = R.exitCurves[pf.properties[0].id].map(x => String(x.year));
+    const holdLine = { name: "계속 보유", values: years.map(() => R.holdSim.terminalWealth), dashed: true, color: "#888" };
+    const markers = pf.properties.map((p, i) => {
+      const c = R.exitCurves[p.id];
+      let bi = 0; c.forEach((x, j) => { if (x.terminalWealth > c[bi].terminalWealth) bi = j; });
+      return { ci: bi, value: c[bi].terminalWealth, label: "BEST " + c[bi].year };
+    });
+
+    const rankTable = top.map((r, i) => `
+      <tr class="${i === 0 ? "hl" : ""}"><td>${i + 1}</td><td>${esc(r.strategy.name)}</td>
+      <td class="num">${U.fmtEok(r.totalCGT)}</td><td class="num">${U.fmtEok(r.totalHoldingTax)}</td>
+      <td class="num"><b>${U.fmtEok(r.terminalWealth)}</b></td><td class="num">${U.fmtEok(r.sim.npv)}</td></tr>`).join("");
+
+    // 법 개정 시 전략 변화 (PART 59, 97)
+    const bestCur = (A.lawMode === "CURRENT" ? R.evalAll : R.evalAllOther)[0];
+    const bestPro = (A.lawMode === "CURRENT" ? R.evalAllOther : R.evalAll)[0];
+    const changed = bestCur.strategy.key !== bestPro.strategy.key;
+
+    const revs = [];
+    for (const p of pf.properties) {
+      const r = R.reversalVsHold[p.id];
+      if (r != null) revs.push(`시장 상승률 <b>${(r * 100).toFixed(2)}%</b> ${r >= (R.holdSim.scenario.marketGrowth) ? "이상이면" : "이하이면"} — 「계속 보유」 vs 「${esc(p.name)} ${A.startYear + 1} 매도」의 우위가 바뀝니다.`);
+    }
+    if (R.reversalAB != null) revs.push(`상승률 <b>${(R.reversalAB * 100).toFixed(2)}%</b>가 「${esc(pf.properties[0].name)} 먼저」 vs 「${esc(pf.properties[1].name)} 먼저」의 경계입니다.`);
+
+    return `
+      <h3>전략별 세후 최종자산 (${A.endYear}년 청산 가정) ${MODE_BADGE[APP.pf.assumptions.lawMode]}</h3>
+      ${bars}
+      <h3>매도연도 최적화 곡선 (PART 45)</h3>
+      ${C.line(years, curves.concat([holdLine]), { title: "매도연도 최적화", markers })}
+      <h3>전략 순위 (상위 12개 / 전체 ${R.evalAll.length}개 전수평가)</h3>
+      <div class="tbl-wrap"><table class="data">
+        <thead><tr><th>#</th><th>전략</th><th>양도세</th><th>보유세</th><th>최종자산</th><th>NPV</th></tr></thead>
+        <tbody>${rankTable}</tbody></table></div>
+      <h3>STRATEGY REVERSAL POINT — 무엇이 바뀌면 결론이 뒤집히는가 (PART 54, 95)</h3>
+      <div class="analysis">${revs.length ? revs.map(r => "<p>" + r + "</p>").join("") : "<p>탐색 구간(-5%~+12%) 내 역전 없음.</p>"}
+      <p class="conf">확정적 시장 전망이 아니라 「현재 가정 하에서의 경계값」입니다.</p></div>
+      <h3>세법 개정 시 전략 변화 (PART 59)</h3>
+      <div class="${changed ? "warn-box" : "note"}">
+        현행법 1위: <b>${esc(bestCur.strategy.name)}</b> (${U.fmtEok(bestCur.terminalWealth)})<br>
+        개편안 시행 가정 1위: <b>${esc(bestPro.strategy.name)}</b> (${U.fmtEok(bestPro.terminalWealth)})<br>
+        ${changed ? "⚠ STRATEGY CHANGE — 세법 개정이 확정되면 최적 전략이 달라집니다." : "최적 전략 동일 — 세법 개정이 순위를 바꾸지 않습니다."}
+      </div>`;
+  }
+
+  /* =========================================================
+   * TAB: 민감도
+   * ========================================================= */
+  function renderSensitivity() {
+    const pf = APP.pf, R = APP.results;
+    return pf.properties.map(p => {
+      const sm = R.sensitivity[p.id];
+      const rows = sm.rates.map(r => (r * 100).toFixed(0) + "%");
+      const cols = sm.years.map(String).concat(["보유"]);
+      const cells = sm.cells.map((row, i) => row.concat([sm.holdCol[i]]));
+      return `<h3>${esc(p.name)} 매도연도 × 시장상승률 → 세후 최종자산 (PART 46)</h3>
+        <div class="hint">검은 테두리 = 최적 조합. 마지막 열 「보유」 = 매도하지 않고 종료연도 청산.</div>
+        ${C.heatmap(rows, cols, cells, { title: p.name + " 민감도" })}`;
+    }).join("") + `
+      <h3>STRESS TEST 프리셋 (PART 74)</h3>
+      <div class="toolbar">
+        <button class="btn" data-stress="crash">집값 -20% 후 횡보</button>
+        <button class="btn" data-stress="flat">집값 5년 횡보</button>
+        <button class="btn" data-stress="pubUp">공시가격 +15%/년</button>
+        <button class="btn" data-stress="reset">기준 시나리오 복귀</button>
+      </div>
+      <div class="note">프리셋은 시나리오(CUSTOM 성장률)를 바꿔 전체 재계산합니다.</div>`;
+  }
+
+  /* =========================================================
+   * TAB: 세법 (TAX LAW WATCH / Registry)
+   * ========================================================= */
+  function renderLaw() {
+    const rows = Reg.RULES.map(r => `
+      <tr ${r.updatedAt ? 'class="hl"' : ""}><td><code>${esc(r.ruleId)}</code>${r.updatedAt ? "<br><span class='hint'>🔔 " + esc(RETAX.LawMonitor.fmtTime(r.updatedAt)) + " 갱신</span>" : ""}</td><td>${esc(r.taxType)}</td>
+      <td><span class="badge badge-${r.status === "CURRENT" ? "current" : r.status === "PROPOSED" ? "proposed" : "est"}">${esc(r.status)}</span></td>
+      <td>${esc(r.effectiveFrom)} ~ ${esc(r.effectiveTo || "")}</td>
+      <td>${esc(r.sourceAuthority)}<br><a href="${esc(r.sourceUrl)}" target="_blank" rel="noopener">${esc(r.sourceTitle)}</a></td>
+      <td>${esc(r.verifiedAt)}</td>
+      <td class="small">${esc(r.notes || "")}</td></tr>`).join("");
+    const areas = Reg.REGULATED_AREAS.map(a => `
+      <tr><td>${esc(a.region)}</td><td>${esc(a.effectiveFrom)} ~ ${esc(a.effectiveTo || "현재")}</td>
+      <td>${esc(a.status)}</td><td class="small">${esc(a.officialSource)}</td></tr>`).join("");
+    const M = RETAX.LawMonitor;
+    const changelog = (M.state.changelog.length ? M.state.changelog : []).map(c => `
+      <tr><td>${esc(M.fmtTime(c.date))}</td><td>v${esc(c.version || "-")}</td><td class="small">${esc(c.summary || "")}</td></tr>`).join("");
+    return `
+      <div class="note"><b>법령 DB v${esc(M.state.appliedVersion)}</b>
+      · 법령 DB 업데이트 시각: <b>${esc(M.fmtTime(M.state.appliedAt))}</b>
+      · 이 브라우저 마지막 확인: ${esc(M.fmtTime(M.state.lastCheckedAt))}
+      · 상태: ${M.state.lastResult === "UPDATED" ? "🔔 업데이트 적용됨" : M.state.lastResult === "UP_TO_DATE" ? "✅ 최신" : M.state.lastResult === "OFFLINE" ? "⚠ 원격 확인 실패(오프라인) — 내장 DB 사용" : "확인 전"}
+      <br>내장 검증일 ${Reg.META_VERIFIED_AT} 기준이며, 실행 당시 공식 법령이 항상 우선합니다 (PART 108).
+      2026 세제개편안은 <b>정부안(PROPOSED)</b>이고 국회 통과·공포 시 원격 법령 DB로 상태가 자동 갱신됩니다 (PART 96, 109).</div>
+      <div class="toolbar"><button class="btn primary" id="btn-law-check">세법 최신 확인 (지금 확인)</button></div>
+      ${changelog ? `<h3>법령 DB 변경 이력</h3><div class="tbl-wrap"><table class="data small">
+        <thead><tr><th>업데이트 시각</th><th>버전</th><th>내용</th></tr></thead><tbody>${changelog}</tbody></table></div>` : ""}
+      <h3>공식 소스 바로가기</h3>
+      <div class="toolbar">
+        <a class="btn" href="https://www.law.go.kr" target="_blank" rel="noopener">국가법령정보센터</a>
+        <a class="btn" href="https://www.moef.go.kr" target="_blank" rel="noopener">기획재정부 (세제개편안)</a>
+        <a class="btn" href="https://www.nts.go.kr" target="_blank" rel="noopener">국세청</a>
+        <a class="btn" href="https://likms.assembly.go.kr/bill/main.do" target="_blank" rel="noopener">국회 의안정보시스템</a>
+        <a class="btn" href="https://www.realtyprice.kr" target="_blank" rel="noopener">부동산공시가격알리미</a>
+        <a class="btn" href="https://rt.molit.go.kr" target="_blank" rel="noopener">국토부 실거래가</a>
+      </div>
+      <h3>Tax Rule Registry (${Reg.RULES.length}개 규칙)</h3>
+      <div class="tbl-wrap"><table class="data small">
+        <thead><tr><th>ruleId</th><th>세목</th><th>상태</th><th>유효기간</th><th>출처</th><th>검증일</th><th>비고</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+      <h3>조정대상지역 이력 (PART 17)</h3>
+      <div class="tbl-wrap"><table class="data small">
+        <thead><tr><th>지역</th><th>기간</th><th>상태</th><th>근거</th></tr></thead>
+        <tbody>${areas}</tbody></table></div>`;
+  }
+
+  /* =========================================================
+   * TAB: 스냅샷
+   * ========================================================= */
+  function renderSnapshots() {
+    const snaps = RETAX.State.listSnapshots();
+    const rows = snaps.map((s, i) => `
+      <tr><td>${new Date(s.savedAt).toLocaleString("ko-KR")}</td>
+      <td>법령검증 ${esc(s.lawRegistryVerifiedAt)}</td>
+      <td class="num">${s.summary ? U.fmtEok(s.summary.terminalWealthBest) : "-"}</td>
+      <td>${s.summary ? esc(s.summary.bestStrategy) : "-"}</td>
+      <td><button class="btn danger" data-del-snap="${i}">삭제</button></td></tr>`).join("");
+    return `
+      <div class="note">현재 가정·법령버전·결과를 저장해 두고 나중 분석과 비교합니다 (PART 60). 데이터는 이 브라우저에만 저장됩니다.</div>
+      <div class="toolbar"><button class="btn primary" id="btn-snap">현재 분석 스냅샷 저장</button>
+      <button class="btn" id="btn-export">포트폴리오 JSON 내보내기(클립보드)</button></div>
+      <div class="tbl-wrap"><table class="data">
+        <thead><tr><th>저장시각</th><th>법령버전</th><th>1위 전략 TW</th><th>1위 전략</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="5">저장된 스냅샷 없음</td></tr>'}</tbody></table></div>`;
+  }
+
+  /* =========================================================
+   * 셸 렌더 + 이벤트
+   * ========================================================= */
+  const TABS = [
+    ["dashboard", "대시보드", renderDashboard],
+    ["props", "보유주택 입력", renderProperties],
+    ["holding", "보유세 상세", renderHolding],
+    ["cgt", "양도세", renderCGT],
+    ["strategy", "전략 비교", renderStrategy],
+    ["sens", "민감도·스트레스", renderSensitivity],
+    ["law", "세법 레지스트리", renderLaw],
+    ["snap", "스냅샷", renderSnapshots]
+  ];
+
+  function renderShell() {
+    const a = APP.pf.assumptions;
+    el("controls").innerHTML = `
+      <label>법령 모드
+        <select id="ctl-law">
+          <option value="CURRENT" ${a.lawMode === "CURRENT" ? "selected" : ""}>MODE A — 현행법</option>
+          <option value="PROPOSED" ${a.lawMode === "PROPOSED" ? "selected" : ""}>MODE B — 2026 개편안(미확정)</option>
+        </select></label>
+      <label>가격 시나리오
+        <select id="ctl-scn">
+          ${["BEAR", "BASE", "BULL", "CUSTOM"].map(k => `<option value="${k}" ${a.scenarioKey === k ? "selected" : ""}>${k}</option>`).join("")}
+        </select></label>
+      <label class="custom-only" style="${a.scenarioKey === "CUSTOM" ? "" : "display:none"}">시장상승률(%)
+        <input id="ctl-mg" type="number" step="0.5" value="${typeof a.customScenario.marketGrowth === "number" ? (a.customScenario.marketGrowth * 100).toFixed(1) : ""}" placeholder="연도별 프리셋"></label>
+      <label class="custom-only" style="${a.scenarioKey === "CUSTOM" ? "" : "display:none"}">공시상승률(%)
+        <input id="ctl-pg" type="number" step="0.5" value="${typeof a.customScenario.publicGrowth === "number" ? (a.customScenario.publicGrowth * 100).toFixed(1) : ""}" placeholder="연도별 프리셋"></label>
+      <label>분석 종료연도
+        <select id="ctl-end">${[2030, 2032, 2035, 2040, 2045].map(y => `<option ${a.endYear === y ? "selected" : ""}>${y}</option>`).join("")}</select></label>
+      <label>매도대금 운용수익률(%) <input id="ctl-cash" type="number" step="0.5" value="${(a.cashReturn * 100).toFixed(1)}"></label>
+      <label>할인율(%) <input id="ctl-dr" type="number" step="0.5" value="${(a.discountRate * 100).toFixed(1)}"></label>
+      <button class="btn primary" id="ctl-recalc">전체 다시 계산</button>`;
+    el("tabs").innerHTML = TABS.map(t =>
+      `<button class="tab ${APP.tab === t[0] ? "active" : ""}" data-tab="${t[0]}">${t[1]}</button>`).join("");
+  }
+
+  function renderTab() {
+    const t = TABS.find(x => x[0] === APP.tab);
+    el("content").innerHTML = t[2]();
+    bindContentEvents();
+  }
+
+  function readControls() {
+    const a = APP.pf.assumptions;
+    a.lawMode = el("ctl-law").value;
+    a.scenarioKey = el("ctl-scn").value;
+    a.endYear = +el("ctl-end").value;
+    a.cashReturn = (+el("ctl-cash").value || 0) / 100;
+    a.discountRate = (+el("ctl-dr").value || 0) / 100;
+    if (el("ctl-mg") && el("ctl-mg").value !== "") a.customScenario.marketGrowth = (+el("ctl-mg").value || 0) / 100;
+    if (el("ctl-pg") && el("ctl-pg").value !== "") a.customScenario.publicGrowth = (+el("ctl-pg").value || 0) / 100;
+  }
+
+  function fullRefresh() {
+    RETAX.State.save(APP.pf);
+    recompute();
+    renderShell();
+    bindShellEvents();
+    renderTab();
+  }
+
+  function bindShellEvents() {
+    el("ctl-recalc").onclick = () => { readControls(); fullRefresh(); };
+    el("ctl-scn").onchange = () => { readControls(); fullRefresh(); };
+    el("ctl-law").onchange = () => { readControls(); fullRefresh(); };
+    el("ctl-end").onchange = () => { readControls(); fullRefresh(); };
+    el("tabs").querySelectorAll("[data-tab]").forEach(b =>
+      b.onclick = () => { APP.tab = b.dataset.tab; renderShell(); bindShellEvents(); renderTab(); });
+  }
+
+  function bindContentEvents() {
+    const addProp = el("btn-add-prop");
+    if (addProp) addProp.onclick = () => {
+      readPropertyInputs();
+      const n = APP.pf.properties.length + 1;
+      APP.pf.properties.push(Object.assign(RETAX.State.defaultPortfolio().properties[0], {
+        id: "prop" + Date.now(), name: "주택 " + n, district: "기타 서울",
+        publicPriceByYear: {}, assumptions: ["신규 입력 필요"]
+      }));
+      APP.pf.properties[APP.pf.properties.length - 1].publicPriceByYear[APP.pf.assumptions.startYear] = 10e8;
+      fullRefresh(); APP.tab = "props"; renderTab();
+    };
+    const addTp = el("btn-add-tp");
+    if (addTp) addTp.onclick = () => {
+      readPropertyInputs();
+      APP.pf.household.taxpayers.push({ id: "tp" + Date.now(), name: "배우자", age: null });
+      RETAX.State.save(APP.pf); renderTab();
+    };
+    const apply = el("btn-apply");
+    if (apply) apply.onclick = () => { readPropertyInputs(); fullRefresh(); };
+    const reset = el("btn-reset");
+    if (reset) reset.onclick = () => {
+      if (confirm("모든 입력을 기본 테스트 케이스로 되돌립니다. 계속할까요?")) {
+        APP.pf = RETAX.State.reset(); fullRefresh();
+      }
+    };
+    document.querySelectorAll("[data-del-prop]").forEach(b => b.onclick = () => {
+      readPropertyInputs();
+      APP.pf.properties.splice(+b.dataset.delProp, 1);
+      fullRefresh(); APP.tab = "props"; renderTab();
+    });
+    document.querySelectorAll("[data-del-snap]").forEach(b => b.onclick = () => {
+      RETAX.State.deleteSnapshot(+b.dataset.delSnap); renderTab();
+    });
+    const snap = el("btn-snap");
+    if (snap) snap.onclick = () => {
+      const best = APP.results.evalAll[0];
+      RETAX.State.saveSnapshot(APP.pf, {
+        bestStrategy: best.strategy.name, terminalWealthBest: best.terminalWealth,
+        holdingTaxY0: APP.results.holdSim.years[0].holdingTax
+      });
+      renderTab();
+    };
+    const exp = el("btn-export");
+    if (exp) exp.onclick = () => {
+      navigator.clipboard.writeText(JSON.stringify(APP.pf, null, 2));
+      exp.textContent = "복사됨 ✓";
+    };
+    const lawCheck = el("btn-law-check");
+    if (lawCheck) lawCheck.onclick = async () => {
+      lawCheck.textContent = "확인 중…"; lawCheck.disabled = true;
+      await runLawCheck(true);
+      lawCheck.disabled = false;
+      if (APP.tab === "law") renderTab();
+    };
+    document.querySelectorAll("[data-stress]").forEach(b => b.onclick = () => {
+      const a = APP.pf.assumptions;
+      const map = {
+        crash: { mg: { [a.startYear + 1]: -0.20, [a.startYear + 2]: 0 }, pg: { [a.startYear + 1]: -0.10, [a.startYear + 2]: 0 } },
+        flat: { mg: 0, pg: 0 },
+        pubUp: { mg: 0.03, pg: 0.15 },
+        reset: null
+      };
+      if (b.dataset.stress === "reset") { a.scenarioKey = "BASE"; }
+      else {
+        const m = map[b.dataset.stress];
+        a.scenarioKey = "CUSTOM";
+        a.customScenario.marketGrowth = m.mg;
+        a.customScenario.publicGrowth = m.pg;
+      }
+      fullRefresh();
+    });
+  }
+
+  function renderLawStatus() {
+    const M = RETAX.LawMonitor;
+    const st = el("law-status");
+    if (st) st.innerHTML =
+      `법령 DB v${esc(M.state.appliedVersion)} · 업데이트 ${esc(M.fmtTime(M.state.appliedAt))} · ` +
+      (M.state.lastResult === "UPDATED" ? "🔔 새 법령 적용됨"
+        : M.state.lastResult === "UP_TO_DATE" ? "✅ 최신 확인 " + esc(M.fmtTime(M.state.lastCheckedAt))
+        : M.state.lastResult === "OFFLINE" ? "⚠ 원격 확인 실패 — 내장 DB(검증일 " + Reg.META_VERIFIED_AT + ") 사용"
+        : "확인 중…");
+    const banner = el("law-banner");
+    if (banner) {
+      banner.innerHTML = (M.state.lastResult === "UPDATED" && M.state.changedRuleIds.length)
+        ? `<div class="law-update">🔔 <b>IMPORTANT TAX LAW UPDATE</b> —
+           법령 DB가 v${esc(M.state.appliedVersion)}(으)로 갱신되었습니다
+           (업데이트 시각: <b>${esc(M.fmtTime(M.state.appliedAt))}</b>,
+           변경 규칙: ${M.state.changedRuleIds.map(esc).join(", ")}).
+           모든 전략이 새 법령으로 자동 재계산되었습니다 — 「세법 레지스트리」 탭에서 상세를 확인하세요.</div>`
+        : "";
+    }
+  }
+
+  /** 법령 DB 자동 확인 → 변경 시 전체 재계산 (PART 96~97) */
+  async function runLawCheck() {
+    const M = RETAX.LawMonitor;
+    await M.check();
+    if (M.state.lastResult === "UPDATED" && M.state.changedRuleIds.length) {
+      recompute();                 // 새 규칙으로 자동 재계산
+      renderTab();
+    }
+    renderLawStatus();
+    renderFooter();
+  }
+
+  function renderFooter() {
+    el("footer-meta").textContent =
+      `Ver. ${Reg.APP_VERSION} · 제작 Dr. Min & Dr. Lee · 법령 DB v${RETAX.LawMonitor.state.appliedVersion}` +
+      ` (내장 검증일 ${Reg.META_VERIFIED_AT}) · 규칙 ${Reg.RULES.length}개 · 전략 ${APP.results.evalAll.length}개 전수평가 (${APP.results.computeMs}ms)`;
+  }
+
+  function init() {
+    APP.pf = RETAX.State.load();
+    recompute();
+    renderShell();
+    bindShellEvents();
+    renderTab();
+    renderFooter();
+    renderLawStatus();
+    runLawCheck();   // 접속할 때마다 법령 DB 자동 확인 (비동기)
+  }
+
+  return { init, APP, runLawCheck };
+})();
+
+if (typeof module !== "undefined") module.exports = RETAX.UI;
