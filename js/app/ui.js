@@ -490,7 +490,7 @@ RETAX.UI = (function () {
 
     const curves = pf.properties.map((p, i) => {
       const c = R.exitCurves[p.id];
-      return { name: p.name + " 매도연도별 TW", values: c.map(x => x.terminalWealth), color: C.COLORS[i] };
+      return { name: p.name + " 매도 시 최종자산", values: c.map(x => x.terminalWealth), color: C.COLORS[i] };
     });
     const years = R.exitCurves[pf.properties[0].id].map(x => String(x.year));
     const holdLine = { name: "계속 보유", values: years.map(() => R.holdSim.terminalWealth), dashed: true, color: "#888" };
@@ -565,17 +565,26 @@ RETAX.UI = (function () {
   /* =========================================================
    * TAB: 세법 (TAX LAW WATCH / Registry)
    * ========================================================= */
+  const TAXTYPE_KO = {
+    PROPERTY_TAX: "재산세", COMPREHENSIVE_TAX: "종합부동산세",
+    CGT_BASIC: "양도세 (기본)", CGT_SURCHARGE: "양도세 (다주택 중과)"
+  };
+  const STATUS_KO = {
+    CURRENT: "시행 중", PROPOSED: "정부안 (미확정)", PASSED: "국회 통과",
+    PROMULGATED: "공포됨", FUTURE_EFFECTIVE: "시행 예정", EXPIRED: "지난 규정", SUPERSEDED: "대체됨"
+  };
+
   function renderLaw() {
     const rows = Reg.RULES.map(r => `
-      <tr ${r.updatedAt ? 'class="hl"' : ""}><td><code>${esc(r.ruleId)}</code>${r.updatedAt ? "<br><span class='hint'>🔔 " + esc(RETAX.LawMonitor.fmtTime(r.updatedAt)) + " 갱신</span>" : ""}</td><td>${esc(r.taxType)}</td>
-      <td><span class="badge badge-${r.status === "CURRENT" ? "current" : r.status === "PROPOSED" ? "proposed" : "est"}">${esc(r.status)}</span></td>
+      <tr ${r.updatedAt ? 'class="hl"' : ""}><td><code>${esc(r.ruleId)}</code>${r.updatedAt ? "<br><span class='hint'>🔔 " + esc(RETAX.LawMonitor.fmtTime(r.updatedAt)) + " 갱신</span>" : ""}</td><td>${esc(TAXTYPE_KO[r.taxType] || r.taxType)}</td>
+      <td><span class="badge badge-${r.status === "CURRENT" ? "current" : r.status === "PROPOSED" ? "proposed" : "est"}">${esc(STATUS_KO[r.status] || r.status)}</span></td>
       <td>${esc(r.effectiveFrom)} ~ ${esc(r.effectiveTo || "")}</td>
       <td>${esc(r.sourceAuthority)}<br><a href="${esc(r.sourceUrl)}" target="_blank" rel="noopener">${esc(r.sourceTitle)}</a></td>
       <td>${esc(r.verifiedAt)}</td>
       <td class="small">${esc(r.notes || "")}</td></tr>`).join("");
     const areas = Reg.REGULATED_AREAS.map(a => `
       <tr><td>${esc(a.region)}</td><td>${esc(a.effectiveFrom)} ~ ${esc(a.effectiveTo || "현재")}</td>
-      <td>${esc(a.status)}</td><td class="small">${esc(a.officialSource)}</td></tr>`).join("");
+      <td>${esc(STATUS_KO[a.status] || a.status)}</td><td class="small">${esc(a.officialSource)}</td></tr>`).join("");
     const M = RETAX.LawMonitor;
     const changelog = (M.state.changelog.length ? M.state.changelog : []).map(c => `
       <tr><td>${esc(M.fmtTime(c.date))}</td><td>v${esc(c.version || "-")}</td><td class="small">${esc(c.summary || "")}</td></tr>`).join("");
@@ -615,7 +624,7 @@ RETAX.UI = (function () {
     const snaps = RETAX.State.listSnapshots();
     const rows = snaps.map((s, i) => `
       <tr><td>${new Date(s.savedAt).toLocaleString("ko-KR")}</td>
-      <td>법령검증 ${esc(s.lawRegistryVerifiedAt)}</td>
+      <td>검증일 ${esc(s.lawRegistryVerifiedAt)}</td>
       <td class="num">${s.summary ? U.fmtEok(s.summary.terminalWealthBest) : "-"}</td>
       <td>${s.summary ? esc(s.summary.bestStrategy) : "-"}</td>
       <td><button class="btn danger" data-del-snap="${i}">삭제</button></td></tr>`).join("");
@@ -624,7 +633,7 @@ RETAX.UI = (function () {
       <div class="toolbar"><button class="btn primary" id="btn-snap">현재 분석 결과 저장</button>
       <button class="btn" id="btn-export">입력 데이터 복사 (다른 기기로 옮길 때)</button></div>
       <div class="tbl-wrap"><table class="data">
-        <thead><tr><th>저장시각</th><th>법령버전</th><th>1위 전략 TW</th><th>1위 전략</th><th></th></tr></thead>
+        <thead><tr><th>저장 시각</th><th>세법 데이터 기준</th><th>1위 전략의 최종자산</th><th>1위 전략</th><th></th></tr></thead>
         <tbody>${rows || '<tr><td colspan="5">저장된 스냅샷 없음</td></tr>'}</tbody></table></div>`;
   }
 
