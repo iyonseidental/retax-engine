@@ -11,9 +11,9 @@ RETAX.Market = (function () {
   const U = RETAX.Util;
 
   const DEFAULT_SCENARIOS = {
-    BEAR: { key: "BEAR", label: "보수적", marketGrowth: -0.01, publicGrowth: 0.00 },
-    BASE: { key: "BASE", label: "기준",   marketGrowth: 0.03,  publicGrowth: 0.025 },
-    BULL: { key: "BULL", label: "강세",   marketGrowth: 0.06,  publicGrowth: 0.05 }
+    BEAR: { key: "BEAR", label: "하락 전망", marketGrowth: -0.01, publicGrowth: 0.00 },
+    BASE: { key: "BASE", label: "보통 전망", marketGrowth: 0.03,  publicGrowth: 0.025 },
+    BULL: { key: "BULL", label: "상승 전망", marketGrowth: 0.06,  publicGrowth: 0.05 }
   };
 
   /** growth: number(고정) 또는 {2027:0.07, 2028:0.05,...}(연도별) */

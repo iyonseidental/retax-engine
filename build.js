@@ -40,8 +40,8 @@ ${css}
 <header>
   <div class="brand">
     <h1>🏠 부동산 보유·매도 전략 엔진 <span class="ver">Ver. 1.0</span></h1>
-    <p class="sub">제작자 <b>Dr. Min &amp; Dr. Lee</b> · 보유세 · 양도세 · HOLD/SELL DECISION — deterministic tax engine (단일파일 배포본)</p>
-    <p class="sub" id="law-status">법령 DB 확인 중…</p>
+    <p class="sub">제작자 <b>Dr. Min &amp; Dr. Lee</b> · 보유세·양도세 자동 계산 + 언제·어느 집을 팔지 전략 분석 (단일파일)</p>
+    <p class="sub" id="law-status">세법 데이터 확인 중…</p>
   </div>
   <div id="controls" class="controls"></div>
 </header>
