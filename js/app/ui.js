@@ -669,7 +669,12 @@ RETAX.UI = (function () {
       <label class="custom-only" style="${a.scenarioKey === "CUSTOM" ? "" : "display:none"}">공시가격 상승률(연 %)
         <input id="ctl-pg" type="number" step="0.5" value="${typeof a.customScenario.publicGrowth === "number" ? (a.customScenario.publicGrowth * 100).toFixed(1) : ""}" placeholder="실험 설정 사용 중"></label>
       <label>분석 종료연도
-        <select id="ctl-end">${[2030, 2032, 2035, 2040, 2045].map(y => `<option ${a.endYear === y ? "selected" : ""}>${y}</option>`).join("")}</select></label>
+        <select id="ctl-end">${(() => {
+          const opts = [];
+          for (let y = a.startYear + 1; y <= 2050; y++)
+            opts.push(`<option ${a.endYear === y ? "selected" : ""}>${y}</option>`);
+          return opts.join("");
+        })()}</select></label>
       <label>매도 후 현금 수익률(연 %) <input id="ctl-cash" type="number" step="0.5" value="${(a.cashReturn * 100).toFixed(1)}" title="집을 판 돈을 예금·투자로 굴릴 때의 연 수익률"></label>
       <label>할인율(연 %) <input id="ctl-dr" type="number" step="0.5" value="${(a.discountRate * 100).toFixed(1)}" title="미래 돈을 현재 가치로 환산할 때 쓰는 비율"></label>
       <button class="btn primary" id="ctl-recalc">전체 다시 계산</button>`;
