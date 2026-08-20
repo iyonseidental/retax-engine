@@ -18,6 +18,7 @@ RETAX.State = (function () {
       name: "주택 " + n,
       district: "기타 서울",
       address: "",
+      dong: "", ho: "",
       exclusiveArea: null,
       owners: [{ taxpayerId: "tp1", share: 1.0 }],
       publicPriceByYear: { [START_YEAR]: 0 },

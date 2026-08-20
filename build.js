@@ -16,6 +16,7 @@ const JS_FILES = [
   "js/engine/market.js",
   "js/engine/strategy.js",
   "js/app/state.js",
+  "js/app/address.js",
   "js/app/lawmonitor.js",
   "js/app/charts.js",
   "js/app/ui.js"

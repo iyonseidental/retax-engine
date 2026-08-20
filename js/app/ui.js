@@ -233,6 +233,13 @@ RETAX.UI = (function () {
   /* =========================================================
    * TAB: 보유주택 입력
    * ========================================================= */
+  function cachedPriceHint(p, year) {
+    const hit = RETAX.Address.getCachedPrice(p.address, p.dong, p.ho, year);
+    return hit
+      ? "💾 캐시: " + U.fmt(hit.price) + "원 (" + new Date(hit.savedAt).toLocaleDateString("ko-KR") + " 저장)"
+      : "공시가격 조회 버튼 → 알리미에서 확인한 값을 입력하면 주소·동·호 기준으로 캐시됩니다";
+  }
+
   function renderProperties() {
     const pf = APP.pf;
     const tps = pf.household.taxpayers;
@@ -261,8 +268,19 @@ RETAX.UI = (function () {
               ${["강남구", "서초구", "송파구", "용산구", "동작구", "기타 서울", "비규제지역"].map(d =>
                 `<option ${p.district === d ? "selected" : ""}>${d}</option>`).join("")}
             </select></label>
-          <label>주소 (수동입력 — 도로명주소 API는 서버 프록시 필요) <input data-p="${pi}" data-k="address" value="${esc(p.address || "")}"></label>
-          <label>${pf.assumptions.startYear} 공시가격(원) <input type="number" data-p="${pi}" data-k="publicPrice0" value="${p.publicPriceByYear[pf.assumptions.startYear] || ""}"></label>
+          <label>주소
+            <span style="display:flex; gap:6px;">
+              <input data-p="${pi}" data-k="address" value="${esc(p.address || "")}" style="flex:1" placeholder="주소검색 버튼을 누르거나 직접 입력">
+              <button class="btn" data-addr-search="${pi}" type="button">🔍 주소검색</button>
+            </span></label>
+          <label>동 <input data-p="${pi}" data-k="dong" value="${esc(p.dong || "")}" placeholder="예: 101"></label>
+          <label>호 <input data-p="${pi}" data-k="ho" value="${esc(p.ho || "")}" placeholder="예: 1204"></label>
+          <label>${pf.assumptions.startYear} 공시가격(원)
+            <span style="display:flex; gap:6px;">
+              <input type="number" data-p="${pi}" data-k="publicPrice0" value="${p.publicPriceByYear[pf.assumptions.startYear] || ""}" style="flex:1">
+              <button class="btn" data-pubprice-open="${pi}" type="button" title="부동산공시가격알리미에서 조회 후 값을 붙여넣으세요">공시가격 조회</button>
+            </span>
+            <span class="hint" id="pubprice-hint-${pi}">${cachedPriceHint(p, pf.assumptions.startYear)}</span></label>
           <label>현재 시장가치(원) ${GRADE_BADGE.ASSUMPTION} <input type="number" data-p="${pi}" data-k="marketValue" value="${p.marketValue}"></label>
           <label>취득일 <input type="date" data-p="${pi}" data-k="acquisitionDate" value="${esc(p.acquisitionDate)}"></label>
           <label>실제 취득가격(원) <input type="number" data-p="${pi}" data-k="acquisitionPrice" value="${p.acquisitionPrice}"></label>
@@ -284,9 +302,12 @@ RETAX.UI = (function () {
     }).join("");
 
     return `
-      <div class="note">공시가격 자동조회(부동산공시가격알리미 API)·도로명주소 검색은 API 키/서버 프록시가 필요하여
-      v1은 <b>수동입력 + 캐시</b> 모드로 동작합니다 (API→CACHE→MANUAL fallback 설계, PART 63~64).
-      개인정보는 이 브라우저(localStorage) 밖으로 전송되지 않습니다 (local-first, PART 66).</div>
+      <div class="note"><b>🔍 주소검색</b>: 버튼을 누르면 우편번호 서비스(카카오)로 주소를 검색하고,
+      자치구(조정대상지역 판정)와 아파트명이 자동 입력됩니다.
+      <b>공시가격 조회</b>: 정부 공시가격 API는 브라우저 직접 호출이 차단되어 있어,
+      버튼으로 부동산공시가격알리미를 열어 확인한 값을 입력하면 <b>주소·동·호 기준으로 캐시</b>되어 다음부터 자동 채워집니다
+      (API→CACHE→MANUAL fallback, PART 63~65).
+      입력한 재산 정보는 이 브라우저(localStorage) 밖으로 전송되지 않으며, 주소 검색어만 검색 시 카카오 서버로 전송됩니다.</div>
       ${tpHtml}
       <h3>보유 주택 (${pf.properties.length}채)</h3>
       ${propsHtml}
@@ -313,7 +334,15 @@ RETAX.UI = (function () {
         case "name": p.name = v; break;
         case "district": p.district = v; break;
         case "address": p.address = v; break;
-        case "publicPrice0": p.publicPriceByYear[pf.assumptions.startYear] = +v || 0; break;
+        case "dong": p.dong = v; break;
+        case "ho": p.ho = v; break;
+        case "publicPrice0": {
+          const price = +v || 0;
+          p.publicPriceByYear[pf.assumptions.startYear] = price;
+          if (price > 0 && p.address) // 주소·동·호 기준 공시가격 캐시 (PART 65)
+            RETAX.Address.saveCachedPrice(p.address, p.dong, p.ho, pf.assumptions.startYear, price);
+          break;
+        }
         case "marketValue": p.marketValue = +v || 0; p.marketValueYear = pf.assumptions.startYear; break;
         case "acquisitionDate": p.acquisitionDate = v; break;
         case "acquisitionPrice": p.acquisitionPrice = +v || 0; break;
@@ -679,6 +708,27 @@ RETAX.UI = (function () {
       APP.pf.properties.push(p);
       fullRefresh(); APP.tab = "props"; renderTab();
     };
+    document.querySelectorAll("[data-addr-search]").forEach(b => b.onclick = async () => {
+      const pi = +b.dataset.addrSearch;
+      await RETAX.Address.openSearch(sel => {
+        readPropertyInputs();
+        const p = APP.pf.properties[pi];
+        if (!p) return;
+        p.address = sel.roadAddress + (sel.buildingName ? " (" + sel.buildingName + ")" : "");
+        p.district = sel.district;
+        if (sel.buildingName && (!p.name || /^주택\s/.test(p.name))) p.name = sel.buildingName;
+        if (sel.district === "비규제지역")
+          alert("서울 외 지역입니다. v1 조정대상지역 이력은 서울 기준이므로, 해당 지역의 조정대상지역 여부를 직접 확인해 주세요 (성남 분당·과천 등 2025-10-16 지정 지역 주의).");
+        // 캐시된 공시가격이 있으면 자동 채움
+        const hit = RETAX.Address.getCachedPrice(p.address, p.dong, p.ho, APP.pf.assumptions.startYear);
+        if (hit) p.publicPriceByYear[APP.pf.assumptions.startYear] = hit.price;
+        RETAX.State.save(APP.pf);
+        renderTab();
+      });
+    });
+    document.querySelectorAll("[data-pubprice-open]").forEach(b => b.onclick = () => {
+      RETAX.Address.openRealtyPrice();
+    });
     const sample2 = el("btn-sample2");
     if (sample2) sample2.onclick = () => {
       if (confirm("현재 입력을 가상의 2주택 예시 데이터로 바꿉니다. 계속할까요?")) {
