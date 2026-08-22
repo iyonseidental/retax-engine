@@ -685,6 +685,7 @@ RETAX.UI = (function () {
   function renderTab() {
     const t = TABS.find(x => x[0] === APP.tab);
     el("content").innerHTML = t[2]();
+    el("content").querySelectorAll(".card-v").forEach(v => { if (v.textContent.trim().length > 9) v.classList.add("long"); });
     bindContentEvents();
   }
 
