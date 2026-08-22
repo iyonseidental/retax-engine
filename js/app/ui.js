@@ -190,8 +190,21 @@ RETAX.UI = (function () {
       미래 집값은 어디까지나 가정입니다. 위의 「어떤 가정이 바뀌면 결론이 뒤집히는가」를 반드시 함께 보세요.</p>`;
 
     return `
-      <div class="cards">${cards.map(c => `
-        <div class="card"><div class="card-t">${esc(c[0])}</div><div class="card-v">${c[1]}</div>${GRADE_BADGE[c[2]] || ""}</div>`).join("")}
+      <section class="hero">
+        <div class="hero-main">
+          <div class="hero-eyebrow">${esc(R.holdSim.scenario.label)} 시나리오 · ${A.endYear}년까지 분석 · ${MODE_BADGE[A.lawMode] || ""}</div>
+          <div class="hero-label">세후 최종자산이 가장 높은 전략</div>
+          <h2 class="hero-title">${esc(best.strategy.name)}</h2>
+          <div class="hero-sub">추천 검토 매도시점 <b>${esc(bestSaleYears)}</b> ${GRADE_BADGE.SCENARIO}</div>
+        </div>
+        <div class="hero-side">
+          <div class="hero-stat"><span class="hs-t">세후 최종자산</span><span class="hs-v">${U.fmtEok(best.terminalWealth)}</span><span class="hs-h">계속 보유(${U.fmtEok(R.holdSim.terminalWealth)}) 대비 ${best.terminalWealth - R.holdSim.terminalWealth >= 0 ? "+" : "−"}${U.fmtEok(Math.abs(best.terminalWealth - R.holdSim.terminalWealth))}</span></div>
+          <div class="hero-stat"><span class="hs-t">${y0}년 예상 보유세</span><span class="hs-v">${U.fmtEok(r0.holdingTax)}</span><span class="hs-h">법령 산식으로 확정 계산</span></div>
+          <div class="hero-stat"><span class="hs-t">손익분기 상승률 (${y0 + 1})</span><span class="hs-v">${r1 && r1.breakEvenRate != null ? U.pct(r1.breakEvenRate, 2) : "-"}</span><span class="hs-h">집값이 이보다 덜 오르면 매도 우위</span></div>
+        </div>
+      </section>
+      <div class="stats">${cards.slice(0, 6).map(c => `
+        <div class="stat"><div class="stat-t">${esc(c[0])}</div><div class="stat-v">${c[1]}</div>${GRADE_BADGE[c[2]] || ""}</div>`).join("")}
       </div>
       ${APP.pf.assumptions.lawMode === "PROPOSED" ? '<div class="warn-box">정부 세제개편안 기준 시뮬레이션 — 현재 시행법이 아니며, 국회 심의 및 법률 공포 과정에서 변경될 수 있습니다.</div>' : ""}
       <h3>핵심 질문에 대한 답</h3>

@@ -8,7 +8,7 @@ RETAX.Charts = (function () {
   const U = RETAX.Util;
   const W = 760, H = 340, PAD = { l: 78, r: 16, t: 18, b: 34 };
 
-  const COLORS = ["#3b5bdb", "#e07a3a", "#0f8a6a", "#6d4fc2", "#d6405a", "#7a8a3a", "#2592a8", "#b8862a"];
+  const COLORS = ["#0e9d6e", "#e0762f", "#2c6fb5", "#6b51c0", "#d2445d", "#8a8f2e", "#1f9aa8", "#b8862a"];
 
   function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
 
@@ -104,7 +104,7 @@ RETAX.Charts = (function () {
       const y = PAD.t + i * rowH;
       const w = (W - lw - 90) * it.value / maxV;
       out += `<text x="${lw - 8}" y="${y + rowH * 0.62}" class="ylab" text-anchor="end">${esc(it.label)}</text>`;
-      out += `<rect x="${lw}" y="${y + rowH * 0.15}" width="${Math.max(0, w)}" height="${rowH * 0.66}" fill="${it.color || (it.highlight ? "#e07a3a" : "#3b5bdb")}" rx="3"><title>${(opts.yFmt || U.fmtEok)(it.value)}</title></rect>`;
+      out += `<rect x="${lw}" y="${y + rowH * 0.15}" width="${Math.max(0, w)}" height="${rowH * 0.66}" fill="${it.color || (it.highlight ? "#e0762f" : "#0e9d6e")}" rx="3"><title>${(opts.yFmt || U.fmtEok)(it.value)}</title></rect>`;
       out += `<text x="${lw + w + 6}" y="${y + rowH * 0.62}" class="vlab">${(opts.yFmt || U.fmtEok)(it.value)}</text>`;
     });
     return frame(out, opts);
