@@ -863,7 +863,7 @@ RETAX.UI = (function () {
 
   function renderFooter() {
     el("footer-meta").textContent =
-      `Ver. ${Reg.APP_VERSION} · 제작 Dr. Min & Dr. Lee · 세법 데이터 v${RETAX.LawMonitor.state.appliedVersion}` +
+      `Ver. ${Reg.APP_VERSION} · 제작 Dr. Min · 세법 데이터 v${RETAX.LawMonitor.state.appliedVersion}` +
       ` (검증일 ${Reg.META_VERIFIED_AT}) · 세법 규칙 ${Reg.RULES.length}개 · 전략 ${APP.results.evalAll.length}개 비교 계산 (${APP.results.computeMs}ms)`;
   }
 
